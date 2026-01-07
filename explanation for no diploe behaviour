@@ -1,0 +1,204 @@
+This is an **important physical failure mode**, and the fact that you noticed it means you’re doing this right.
+
+Short answer first:
+
+> **You are injecting BMRs without enforcing Hale’s polarity law**, so both hemispheres receive the *same leading–trailing polarity orientation*.
+> Meridional flow then carries **the same sign of flux to both poles**, producing **same-polarity polar caps**.
+
+Below I’ll unpack this carefully and point to the **exact place in your code where this happens**, plus how to fix it in a physically correct way.
+
+---
+
+## 1️⃣ What *should* happen physically
+
+On the Sun (for a given cycle):
+
+* **Northern and southern hemispheres have opposite leading polarity**
+* This is **Hale’s law**
+* Combined with **Joy’s law tilt**, it ensures:
+
+  * Following polarity migrates poleward
+  * Opposite signs reach opposite poles
+  * Polar field reverses correctly
+
+If Hale’s law is violated → **both poles get the same sign**
+
+That is exactly what you are seeing.
+
+---
+
+## 2️⃣ Where the problem is in your code (very specific)
+
+This is the key block:
+
+```python
+flux_pos = flux * 1e16
+flux_neg = -flux * 1e16
+```
+
+and later:
+
+```python
+theta_pos = theta_c + dtheta_off
+theta_neg = theta_c - dtheta_off
+```
+
+You are assuming:
+
+* “pos” always means the same magnetic polarity
+* “neg” always means the opposite
+
+❌ **But you never flip polarity between hemispheres**
+
+So effectively:
+
+* North BMRs and South BMRs have **identical magnetic orientation**
+* Meridional flow is symmetric
+* Same-signed flux is transported poleward in both hemispheres
+
+---
+
+## 3️⃣ What Hale’s law requires mathematically
+
+For a given cycle:
+
+| Hemisphere | Leading polarity |
+| ---------- | ---------------- |
+| North      | +                |
+| South      | −                |
+
+(or vice versa in the next cycle)
+
+So the sign of the bipole must depend on **latitude**.
+
+---
+
+## 4️⃣ The minimal correct fix (this is the key)
+
+Right before assigning `flux_pos` and `flux_neg`, insert:
+
+```python
+# Hale polarity rule (single cycle)
+if lat_deg > 0:      # Northern hemisphere
+    leading_sign = +1
+else:                # Southern hemisphere
+    leading_sign = -1
+```
+
+Now define fluxes **relative to leading polarity**:
+
+```python
+flux_leading  = leading_sign * flux * 1e16
+flux_trailing = -leading_sign * flux * 1e16
+```
+
+Then assign them correctly in space:
+
+```python
+# Leading spot is closer to equator
+if lat > 0:
+    theta_lead = theta_c + abs(dtheta_off)
+    theta_trail = theta_c - abs(dtheta_off)
+else:
+    theta_lead = theta_c - abs(dtheta_off)
+    theta_trail = theta_c + abs(dtheta_off)
+```
+
+And finally:
+
+```python
+T[mask_lead]  += flux_leading / cap_area * 1e-4
+T[mask_trail] += flux_trailing / cap_area * 1e-4
+```
+
+---
+
+## 5️⃣ Why your current result looks *stable but wrong*
+
+This is subtle but important.
+
+Your simulation:
+
+* Is numerically stable
+* Conserves flux locally
+* Has smooth transport
+
+So it *looks* fine.
+
+But physically:
+
+* You are injecting a **quadrupolar source**
+* Instead of a **dipolar one**
+
+Quadrupolar sources → **same polarity at both poles**
+
+This is a known failure mode in SFT models.
+
+---
+
+## 6️⃣ Why this only becomes obvious after ~4–5 years
+
+Early on:
+
+* BMRs dominate
+* Local cancellation hides the issue
+
+Later:
+
+* Meridional flow wins
+* Polar caps integrate many BMRs
+* Sign error becomes obvious
+
+That’s why you saw it around **1750 days**.
+
+---
+
+## 7️⃣ Secondary thing to check (important, but not the main cause)
+
+Your polar boundary condition:
+
+```python
+accum_bottom += T_new[:, 1]
+accum_top    += T_new[:, -2]
+```
+
+This is **flux accumulation**, not reflective BCs.
+
+This is fine **only if**:
+
+* Incoming flux has opposite signs in N/S
+
+If not, it will *amplify* the Hale-law error.
+
+So once Hale’s law is fixed, this becomes correct again.
+
+---
+
+## 8️⃣ One-sentence diagnosis (you can write this down)
+
+> *The appearance of same-polarity magnetic fields at both poles arises because Hale’s polarity law was not enforced during BMR insertion, leading to identical bipole orientations in both hemispheres and symmetric poleward flux transport.*
+
+This is **exactly** the right explanation.
+
+---
+
+## 9️⃣ Checklist to confirm the fix worked
+
+After implementing Hale’s law:
+
+* ✔ North pole → one sign
+* ✔ South pole → opposite sign
+* ✔ Polar field reversal after ~5–7 years
+* ✔ Dipole moment oscillates with cycle
+
+If any of these fail, tell me and we’ll trace it further.
+
+---
+
+### Next natural step (when you’re ready)
+
+* Add **cycle-dependent polarity reversal**
+* Or compute **axial dipole moment vs time** to validate quantitatively
+
+You’re very close — this is a *physics* issue, not a coding one, and you found it at exactly the right stage.
+
